@@ -66,3 +66,40 @@ jobs:
             --validate ~/Library/Audio/Plug-Ins/Components/"Mode Match.component"
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Package (ad-hoc signed, not notarised)
+        run: |
+          set -euo pipefail
+          A=build/ModeMatch_artefacts/Release
+          NAME="ModeMatch-${GITHUB_SHA::7}-macos-universal"
+          mkdir -p "dist/${NAME}"
+          codesign --force --deep --sign - "$A/Standalone/Mode Match.app"
+          cp -R "$A/VST3/Mode Match.vst3" "$A/AU/Mode Match.component" "$A/CLAP/Mode Match.clap" "$A/Standalone/Mode Match.app" "dist/${NAME}/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "dist/${NAME}/"
+          cp third_party/signalsmith-linear/LICENSE.txt "dist/${NAME}/signalsmith-linear-LICENSE.txt"
+          cp build/_deps/ara_sdk-src/ARA_Library/LICENSE.txt "dist/${NAME}/ARA-LICENSE.txt"
+          cp build/_deps/clap_juce_extensions-src/clap-libs/clap/LICENSE "dist/${NAME}/CLAP-LICENSE.txt"
+          cp build/_deps/clap_juce_extensions-src/LICENSE.md "dist/${NAME}/clap-juce-extensions-LICENSE.txt"
+          cat > "dist/${NAME}/README.txt" <<TXT
+          Mode Match test build ${GITHUB_SHA::7} - macOS (Apple Silicon and Intel, macOS 11 or later)
+
+          VST3:        copy "Mode Match.vst3" to ~/Library/Audio/Plug-Ins/VST3/
+          AU:          copy "Mode Match.component" to ~/Library/Audio/Plug-Ins/Components/
+          CLAP:        copy "Mode Match.clap" to ~/Library/Audio/Plug-Ins/CLAP/
+          Standalone:  copy "Mode Match.app" to /Applications
+
+          Not notarised by Apple, so macOS blocks it at first. In Terminal, clear the quarantine flag on what you installed:
+            xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Mode Match.vst3"
+            xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Mode Match.component"
+            xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/"Mode Match.clap"
+            xattr -dr com.apple.quarantine /Applications/"Mode Match.app"
+          Then rescan plugins in your DAW.
+
+          Source: commit ${GITHUB_SHA} at https://github.com/${GITHUB_REPOSITORY}. GNU AGPLv3 (LICENSE).
+          TXT
+          echo "NAME=${NAME}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: dist
