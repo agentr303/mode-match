@@ -5,7 +5,7 @@ Design and decisions: [PLAN.md](PLAN.md).
 
 ![Mode Match analysing a song in D Dorian](docs/images/analyze.png)
 
-Downloads (Windows VST3 + standalone): [Releases](https://github.com/agentr303/mode-match/releases).
+Downloads (Windows VST3 + standalone, macOS Apple Silicon VST3): [Releases](https://github.com/agentr303/mode-match/releases).
 
 ## Build
 
@@ -34,6 +34,10 @@ cmake --build build --config Release --target ModeMatch_AU ModeMatch_VST3 ModeMa
 
 Copy `Mode Match.component` to `~/Library/Audio/Plug-Ins/Components/` and check it with `auval -v aufx Mdm1 Mdmh`.
 For distribution, sign and notarise both bundles.
+
+Releases get an Apple Silicon VST3 from CI: `.github/workflows/macos-arm64.yml` builds it on a GitHub-hosted Mac,
+runs the tests, ad-hoc signs it and attaches `ModeMatch-<version>-macos-arm64-vst3.zip` when a release is published
+(or run it by hand from the Actions tab with a tag). It isn't notarised.
 
 ## Tests
 
