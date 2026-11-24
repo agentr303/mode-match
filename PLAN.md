@@ -182,7 +182,8 @@ NuvoDeck answers only major or minor. A Dorian vamp (Dm7–G) usually comes back
 | "Camelot" | MIK trademark. Codes are used descriptively (as NuvoDeck already does). Keep "Camelot" out of the product name and marketing headlines. The trademark credit is in THIRD_PARTY_NOTICES.md; add it to the about box too. |
 | NuvoDeck code | Confirm you own it outright (no employer/client claim, no third-party code inside apart from listed libraries). |
 | Key profiles (Temperley, Krumhansl) | Published research data. Fine to use; cite in docs. |
-| JUCE 8 | Use a licence that matches revenue (Starter/Indie/Pro) or AGPLv3. Closed-source sale needs a commercial JUCE licence once over the free tier. |
+| JUCE | **Mode Match is AGPLv3** (LICENSE), so it uses JUCE's AGPLv3 option. NuvoDeck keeps its own JUCE licence. |
+| Open source vs NuvoDeck | The author owns all shared code, so licensing it AGPLv3 here leaves NuvoDeck closed. Copy shared code NuvoDeck → Mode Match only; outside contributions need the CONTRIBUTING.md terms (relicence grant) before any of them can go back into NuvoDeck. |
 | VST3 SDK | MIT since VST3 SDK 3.8 (the copy bundled with JUCE 9). The VST logo/name still needs Steinberg's usage guidelines. |
 | AAX | Avid developer agreement + PACE signing. |
 | ARA 2 SDK | Apache 2.0, keep the notice. |

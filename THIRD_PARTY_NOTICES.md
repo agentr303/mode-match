@@ -11,7 +11,7 @@ Modified: see [`third_party/signalsmith-linear/README.md`](third_party/signalsmi
 
 ### JUCE
 Fetched by CMake, not included in this repository. JUCE is dual-licensed under AGPLv3 or a commercial JUCE licence
-(https://juce.com/legal/juce-8-licence/). Binaries built from this project must follow whichever JUCE licence applies.
+(https://juce.com/legal/juce-8-licence/). Mode Match is AGPLv3, so it uses JUCE under JUCE's AGPLv3 option; binaries built from this project are AGPLv3.
 
 ### VST3 SDK
 Included with JUCE. MIT License (VST3 SDK 3.8+). "VST" is a trademark of Steinberg Media Technologies GmbH.
