@@ -3,6 +3,10 @@
 Realtime pitch spiral + whole-song key (NuvoDeck's key detector, streaming) with modes and Camelot codes.
 Design and decisions: [PLAN.md](PLAN.md).
 
+![Mode Match analysing a song in D Dorian](docs/images/analyze.png)
+
+Downloads (Windows VST3 + standalone): [Releases](https://github.com/agentr303/mode-match/releases).
+
 ## Build
 
 Needs CMake 3.24+ and a C++20 compiler. JUCE 9.0.1 is taken from `C:/Dev/NuvoDeck/build/_deps/juce-src` when it

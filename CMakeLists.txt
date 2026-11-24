@@ -5,6 +5,9 @@ project(ModeMatch VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Link the MSVC runtime statically so the released plugin and app load on PCs without the VC++ Redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 # Product naming in one place (formerly "Radial Key"; renamed for trademark reasons, PLAN.md section 9),
 # so a rename is an edit here plus new plugin codes.
 set(MM_PRODUCT_NAME "Mode Match" CACHE STRING "Plugin name shown in hosts")
