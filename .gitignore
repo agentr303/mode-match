@@ -1,0 +1,25 @@
+# CMake build trees
+build/
+build*/
+out/
+CMakeUserPresets.json
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
+Thumbs.db
+
+# Test recordings are not shipped (see README, BassTonicTests)
+*.wav
+*.mp3
+*.flac
+*.aif
+*.aiff
+*.m4a
+*.ogg
+
+# Local Claude settings
+.claude/settings.local.json
