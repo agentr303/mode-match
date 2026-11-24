@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14 # Apple Silicon runner
+    runs-on: macos-latest # Apple Silicon (arm64) runner
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
