@@ -48,11 +48,18 @@ public:
     // enter `out`, so KeyDetector's chroma is unchanged.
     bool analyse(const float* frame, double sampleRate, std::vector<Peak>& out, std::vector<Peak>* lowPeaks = nullptr);
 
+    // Mode Match's addition, read after analyse(): the frame's log magnitudes (0.5 * ln power) for bins
+    // firstValidBin()..lastValidBin(), for the percussion mask on the chord path.
+    [[nodiscard]] const std::vector<double>& logMagnitudes() const { return logMagnitude; }
+    [[nodiscard]] int firstValidBin() const { return validFirst; }
+    [[nodiscard]] int lastValidBin() const { return validLast; }
+
 private:
     signalsmith::linear::Pow2RealFFT<float> fft { frameSize };
     std::vector<std::complex<float>> freq;
     std::vector<float> windowed, window;
     std::vector<double> logMagnitude;
+    int validFirst = 0, validLast = -1;
 };
 
 struct HostPosition
@@ -63,6 +70,8 @@ struct HostPosition
     double bpm = 120.0;
     double seconds = 0.0;     // host time from the song start
     int beatsPerBar = 4;
+    bool hasBarStart = false; // the host gives the last bar line
+    double barStartPpq = 0.0; // beat position of the bar the block starts in
 };
 
 struct TimelineBin
@@ -78,8 +87,10 @@ struct TimelineBin
     double seconds = 0.0;                // host time at this bin
     int pass = -1;                       // which pass over the timeline wrote it
     int localKey = -1;                   // key index heard here (smoothed)
-    int chord = -1;                      // chord: root + 12 * quality (0 major, 1 minor)
+    int chord = -1;                      // chord: root + 12 * quality (ChordQuality)
     float weight = 0.0f;                 // total peak weight
+    int bar = -1, barBeat = -1;          // bar number and beat within it (host timeline only, else -1)
+    int beatsPerBar = 0;
 };
 
 struct KeySummary
@@ -90,6 +101,7 @@ struct KeySummary
     Chroma presence {};              // share of each pitch class, sums to 1
     Chroma aggregate {};             // NuvoDeck's aggregate chroma (max = 1)
     Chroma bass {}, chordRoots {};   // the mode stage's tonic evidence (unnormalised)
+    Chroma phraseRoots {};           // chord roots on downbeats and phrase starts / ends (host timeline only)
     double tuningCents = 0.0;        // offset from A440 equal temperament
     ModeResult mode;                 // the mode stage
     int analysedBins = 0;
@@ -105,18 +117,45 @@ struct KeySummary
     [[nodiscard]] juce::String displayName() const { return mode.modal ? mode.name() : keyLongName(majorMinorKey); }
     [[nodiscard]] int displayCamelotKey() const { return mode.modal ? mode.camelotKeyIndex() : majorMinorKey; }
     [[nodiscard]] int tonic() const { return mode.modal ? mode.tonic : (majorMinorKey < 0 ? -1 : keyTonic(majorMinorKey)); }
-    // The 7 notes of the song's scale (mode scale, or the natural major / minor scale).
-    [[nodiscard]] std::array<int, 7> scale() const
+    // The scale to show and tune to: the mode, major, or for a minor key natural, harmonic or melodic minor. Harmonic
+    // when the raised 7th is at least 3 % of the notes and outweighs the flat 7th; melodic when the raised 6th does the
+    // same over the flat 6th as well.
+    [[nodiscard]] TuningScale tuningScale() const
     {
+        TuningScale t;
+        if (! valid)
+            return t;
         if (mode.modal)
-            return mode.scale();
-        const Mode m = keyIsMinor(majorMinorKey) ? Mode::aeolian : Mode::ionian;
-        std::array<int, 7> out {};
-        const auto iv = modeIntervals(m);
+        {
+            t.tonic = mode.tonic;
+            t.type = modeName(mode.mode);
+            t.notes = mode.scale();
+            return t;
+        }
+        t.tonic = keyTonic(majorMinorKey);
+        std::array<int, 7> iv = modeIntervals(keyIsMinor(majorMinorKey) ? Mode::aeolian : Mode::ionian);
+        t.type = keyIsMinor(majorMinorKey) ? "Natural Minor" : "Major";
+        if (keyIsMinor(majorMinorKey))
+        {
+            const auto share = [&](int step) { return presence[static_cast<std::size_t>((t.tonic + step) % 12)]; };
+            constexpr double minShare = 0.03;
+            if (share(11) >= minShare && share(11) > share(10))
+            {
+                iv[6] = 11;
+                t.type = "Harmonic Minor";
+                if (share(9) >= minShare && share(9) > share(8))
+                {
+                    iv[5] = 9;
+                    t.type = "Melodic Minor";
+                }
+            }
+        }
         for (int i = 0; i < 7; ++i)
-            out[static_cast<std::size_t>(i)] = (keyTonic(majorMinorKey) + iv[static_cast<std::size_t>(i)]) % 12;
-        return out;
+            t.notes[static_cast<std::size_t>(i)] = (t.tonic + iv[static_cast<std::size_t>(i)]) % 12;
+        return t;
     }
+    // The 7 notes of the song's scale (as tuningScale()).
+    [[nodiscard]] std::array<int, 7> scale() const { return tuningScale().notes; }
 };
 
 class KeyAnalyzer
@@ -139,6 +178,12 @@ public:
     [[nodiscard]] double currentBeat() const { return lastBeat; }
     [[nodiscard]] bool usesHostTimeline() const { return hostTimeline; }
 
+    // ARA: copy another analyser's map (an audio source analysed offline) into this one, its bins shifted by
+    // `indexOffset` and their host time by `secondsOffset`, so several sources sit one after another.
+    // Only bins minIndex..maxIndex are taken; bar positions are dropped (an ARA source has no bars).
+    void importBins(const KeyAnalyzer& other, int indexOffset, double secondsOffset, int minIndex = INT_MIN, int maxIndex = INT_MAX);
+    [[nodiscard]] double getSampleRate() const { return sampleRate; }
+
     void writeTo(juce::OutputStream&) const;
     bool readFrom(juce::InputStream&);
 
@@ -160,6 +205,7 @@ private:
     [[nodiscard]] int binIndexFor(double beat) const;
     void beginPassIfJumped(int bin, bool playing);
     void updateLocalKeyAndChord(const Chroma& frameChroma, const Chroma& frameBass);
+    [[nodiscard]] double percussionMask(double midi) const;
     [[nodiscard]] bool isOvertone(const Peak&) const;
 
     double sampleRate = 48000.0;
@@ -184,8 +230,9 @@ private:
     std::deque<Chroma> recentBass;    // the same frames' bass (below ~250 Hz, down to 35 Hz), for the chord root and tonic
     std::deque<int> recentChords;     // the chord heard at each of those frames
     double runRe = 0.0, runIm = 0.0;
-    int rawLocalKey = -1, smoothedLocalKey = -1, candidateKey = -1, candidateRun = 0;
+    int rawLocalKey = -1, smoothedLocalKey = -1;
     int chordNow = -1;
+    OnlineViterbi keyHmm, chordHmm; // 24 keys; 12 roots x 5 chord qualities
 };
 
 // Folds a fine (10-cent) chroma into 12 pitch classes after taking off `tuneOffset` semitones, soft-assigning each

@@ -126,6 +126,7 @@ int main(int argc, char** argv)
             return 2;
         }
         ModeMatchProcessor processor;
+        processor.editorOpened(); // as if the editor were open while the audio plays (the spiral engine sleeps otherwise)
         FakeHost host;
         host.bpm = argc > 4 ? juce::String(argv[4]).getDoubleValue() : 122.0;
         processor.setPlayHead(&host);
@@ -152,6 +153,7 @@ int main(int argc, char** argv)
         const auto& s = snap.summary;
         std::cout << "shown " << s.displayName() << " | profile " << s.key << " | majorMinorKey " << s.majorMinorKey << " | stage "
                   << s.mode.name() << " margin " << s.mode.margin << " | bins " << s.analysedBins << std::endl;
+        processor.setGpuEnabled(false); // a snapshot of the software renderer
         std::unique_ptr<ModeMatchEditor> editor(static_cast<ModeMatchEditor*>(processor.createEditor()));
         editor->setSize(1200, 760);
         save(*editor, dir.getChildFile("song.png"));
@@ -161,6 +163,7 @@ int main(int argc, char** argv)
     const double rate = 48000.0;
 
     ModeMatchProcessor processor;
+    processor.editorOpened(); // as if the editor were open while the audio plays (the spiral engine sleeps otherwise)
     FakeHost host;
     processor.setPlayHead(&host);
     processor.setPlayConfigDetails(2, 2, rate, block);
@@ -180,6 +183,7 @@ int main(int argc, char** argv)
     }
 
     {
+        processor.setGpuEnabled(false); // a snapshot of the software renderer
         std::unique_ptr<ModeMatchEditor> editor(static_cast<ModeMatchEditor*>(processor.createEditor()));
         editor->setSize(1200, 760);
         save(*editor, dir.getChildFile("analyze.png"));
@@ -202,6 +206,7 @@ int main(int argc, char** argv)
     }
     juce::Thread::sleep(800);
     {
+        processor.setGpuEnabled(false); // a snapshot of the software renderer
         std::unique_ptr<ModeMatchEditor> editor(static_cast<ModeMatchEditor*>(processor.createEditor()));
         editor->setSize(1200, 760);
         for (int i = 0; i < 12; ++i)

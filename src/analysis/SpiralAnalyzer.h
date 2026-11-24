@@ -12,8 +12,13 @@ namespace rk
 // spectral peaks from FFT magnitudes, placed between bins by a parabola through the log magnitudes. No FFT phase is
 // used anywhere (that is what keeps it clear of the phase-demodulation patent, EP 3155609).
 //
-// Two resolutions per update: a 16384-point frame for the bass (below 260 Hz) and a 4096-point frame, zero-padded to
-// 8192, above. Updates ~50 times a second. Tune mode reads the fundamental from YIN (time domain).
+// Four resolutions per update (PLAN.md 4b), longer windows where notes are closer in Hz:
+//   35-200 Hz     16384-point frame
+//   200-700 Hz    8192, zero-padded 2x to 16384
+//   700-2000 Hz   4096, zero-padded 4x to 16384
+//   2000-4200 Hz  2048, zero-padded 4x to 8192
+// Zero-padding keeps the log-parabola's bias on a Hann window small (well under 1 cent above 200 Hz). Updates ~50 times a
+// second. Tune mode reads the fundamental from YIN (time domain).
 struct Partial
 {
     float midi = 0.0f;      // MIDI note number with cents (relative to the A4 reference)
@@ -47,13 +52,13 @@ private:
     void detectPitch();
 
     double sampleRate = 48000.0, referenceA4 = 440.0;
-    static constexpr int longSize = 16384, shortSize = 4096, shortFft = 8192;
+    static constexpr int longSize = 16384, midSize = 8192, shortSize = 4096, tinySize = 2048, tinyFft = 8192;
     std::vector<float> ring;
     juce::int64 written = 0, sinceUpdate = 0;
     int hop = 960;
 
-    signalsmith::linear::Pow2RealFFT<float> longFftEngine { longSize }, shortFftEngine { shortFft };
-    std::vector<float> longWindow, shortWindow, frame;
+    signalsmith::linear::Pow2RealFFT<float> longFftEngine { longSize }, tinyFftEngine { tinyFft };
+    std::vector<float> longWindow, midWindow, shortWindow, tinyWindow, frame;
     std::vector<std::complex<float>> spectrum;
     std::vector<double> logMag;
 

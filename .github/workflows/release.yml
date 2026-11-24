@@ -1,0 +1,186 @@
+# Builds the release downloads and attaches them to a GitHub release: runs when a release is published, or by hand
+# (Actions -> Release builds -> Run workflow) for an existing tag.
+#   ModeMatch-<version>-windows-x64.zip     VST3, CLAP, standalone
+#   ModeMatch-<version>-macos-universal.zip VST3, AU, CLAP, standalone (Apple Silicon + Intel, macOS 11+)
+#
+# macOS signing: with these repository secrets the Mac builds are signed with a Developer ID and notarised by Apple;
+# without them they get an ad-hoc signature (users must clear the quarantine flag, see the README).
+#   MACOS_CERTIFICATE           base64 of the Developer ID Application certificate (.p12)
+#   MACOS_CERTIFICATE_PASSWORD  its password
+#   MACOS_SIGNING_IDENTITY      e.g. "Developer ID Application: Your Name (TEAMID1234)"
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD  for notarytool (an app-specific password)
+name: Release builds
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload to (e.g. v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build
+        run: |
+          cmake -S . -B build -A x64
+          cmake --build build --config Release --target ModeMatch_VST3 ModeMatch_CLAP ModeMatch_Standalone ModeMatchTests --parallel
+
+      - name: Tests
+        run: build/ModeMatchTests_artefacts/Release/ModeMatchTests.exe
+
+      - name: Package and upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NAME="ModeMatch-${VERSION}-windows-x64"
+          A=build/ModeMatch_artefacts/Release
+          mkdir -p "dist/${NAME}"
+          cp -R "$A/VST3/Mode Match.vst3" "dist/${NAME}/"
+          cp "$A/CLAP/Mode Match.clap" "$A/Standalone/Mode Match.exe" "dist/${NAME}/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "dist/${NAME}/"
+          cp third_party/signalsmith-linear/LICENSE.txt "dist/${NAME}/signalsmith-linear-LICENSE.txt"
+          cp build/_deps/ara_sdk-src/ARA_Library/LICENSE.txt "dist/${NAME}/ARA-LICENSE.txt"
+          cp build/_deps/clap_juce_extensions-src/clap-libs/clap/LICENSE "dist/${NAME}/CLAP-LICENSE.txt"
+          cp build/_deps/clap_juce_extensions-src/LICENSE.md "dist/${NAME}/clap-juce-extensions-LICENSE.txt"
+          cat > "dist/${NAME}/README.txt" <<EOF
+          Mode Match ${VERSION} - Windows 64-bit
+
+          VST3:        copy the whole "Mode Match.vst3" folder to C:\Program Files\Common Files\VST3\ and rescan in your DAW.
+          CLAP:        copy "Mode Match.clap" to C:\Program Files\Common Files\CLAP\ and rescan.
+          Standalone:  run "Mode Match.exe"; choose your input under Options > Audio/MIDI Settings.
+
+          How to use, screenshots and source code: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}
+
+          Mode Match is free software under the GNU AGPLv3 (LICENSE). Source for this build: tag ${TAG} at
+          https://github.com/${GITHUB_REPOSITORY}. Third-party notices: THIRD_PARTY_NOTICES.md.
+          EOF
+          (cd dist && 7z a -tzip "${NAME}.zip" "${NAME}" > /dev/null)
+          gh release upload "$TAG" "dist/${NAME}.zip" --clobber --repo "$GITHUB_REPOSITORY"
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build (universal)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          cmake --build build --config Release --target ModeMatch_VST3 ModeMatch_AU ModeMatch_CLAP ModeMatch_Standalone ModeMatchTests --parallel
+
+      - name: Tests
+        run: build/ModeMatchTests_artefacts/Release/ModeMatchTests
+
+      - name: Gather
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NAME="ModeMatch-${VERSION}-macos-universal"
+          A=build/ModeMatch_artefacts/Release
+          mkdir -p "dist/${NAME}"
+          cp -R "$A/VST3/Mode Match.vst3" "$A/AU/Mode Match.component" "$A/CLAP/Mode Match.clap" "$A/Standalone/Mode Match.app" "dist/${NAME}/"
+          cp LICENSE THIRD_PARTY_NOTICES.md "dist/${NAME}/"
+          cp third_party/signalsmith-linear/LICENSE.txt "dist/${NAME}/signalsmith-linear-LICENSE.txt"
+          cp build/_deps/ara_sdk-src/ARA_Library/LICENSE.txt "dist/${NAME}/ARA-LICENSE.txt"
+          cp build/_deps/clap_juce_extensions-src/clap-libs/clap/LICENSE "dist/${NAME}/CLAP-LICENSE.txt"
+          cp build/_deps/clap_juce_extensions-src/LICENSE.md "dist/${NAME}/clap-juce-extensions-LICENSE.txt"
+          echo "NAME=${NAME}" >> "$GITHUB_ENV"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Sign (Developer ID when configured, else ad hoc)
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          D="dist/${NAME}"
+          # The standalone app records audio: hardened runtime needs the audio-input entitlement.
+          cat > entitlements.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>com.apple.security.device.audio-input</key><true/></dict></plist>
+          EOF
+          if [ -n "${MACOS_CERTIFICATE}" ]; then
+            KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+            security create-keychain -p ci "$KEYCHAIN"
+            security set-keychain-settings -lut 3600 "$KEYCHAIN"
+            security unlock-keychain -p ci "$KEYCHAIN"
+            echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k ci "$KEYCHAIN"
+            security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+            for b in "$D/Mode Match.vst3" "$D/Mode Match.component" "$D/Mode Match.clap"; do
+              codesign --force --deep --timestamp --options runtime --sign "$MACOS_SIGNING_IDENTITY" "$b"
+            done
+            codesign --force --deep --timestamp --options runtime --entitlements entitlements.plist --sign "$MACOS_SIGNING_IDENTITY" "$D/Mode Match.app"
+            echo "SIGNED=1" >> "$GITHUB_ENV"
+          else
+            for b in "$D/Mode Match.vst3" "$D/Mode Match.component" "$D/Mode Match.clap" "$D/Mode Match.app"; do
+              codesign --force --deep --sign - "$b"
+            done
+            echo "SIGNED=0" >> "$GITHUB_ENV"
+          fi
+          for b in "$D"/*.vst3 "$D"/*.component "$D"/*.clap "$D"/*.app; do codesign --verify --deep --strict "$b"; done
+          lipo -info "$D/Mode Match.vst3/Contents/MacOS/Mode Match"
+
+      - name: Notarise
+        if: env.SIGNED == '1'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          (cd dist && ditto -c -k --keepParent "${NAME}" notarise.zip)
+          xcrun notarytool submit dist/notarise.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          for b in "dist/${NAME}"/*.vst3 "dist/${NAME}"/*.component "dist/${NAME}"/*.clap "dist/${NAME}"/*.app; do xcrun stapler staple "$b"; done
+          rm dist/notarise.zip
+
+      - name: Package and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$SIGNED" = "1" ]; then
+            GATEKEEPER="Signed with a Developer ID and notarised by Apple: no extra steps."
+          else
+            GATEKEEPER="Not notarised by Apple, so macOS blocks it at first. In Terminal, run for each bundle you installed, e.g.
+            xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/\"Mode Match.vst3\""
+          fi
+          cat > "dist/${NAME}/README.txt" <<EOF
+          Mode Match ${VERSION} - macOS (Apple Silicon and Intel, macOS 11 or later)
+
+          VST3:        copy "Mode Match.vst3" to ~/Library/Audio/Plug-Ins/VST3/
+          AU:          copy "Mode Match.component" to ~/Library/Audio/Plug-Ins/Components/
+          CLAP:        copy "Mode Match.clap" to ~/Library/Audio/Plug-Ins/CLAP/
+          Standalone:  copy "Mode Match.app" to /Applications
+          Then rescan plugins in your DAW.
+
+          ${GATEKEEPER}
+
+          How to use, screenshots and source code: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}
+
+          Mode Match is free software under the GNU AGPLv3 (LICENSE). Source for this build: tag ${TAG} at
+          https://github.com/${GITHUB_REPOSITORY}. Third-party notices: THIRD_PARTY_NOTICES.md.
+          EOF
+          (cd dist && ditto -c -k --sequesterRsrc --keepParent "${NAME}" "${NAME}.zip")
+          gh release upload "$TAG" "dist/${NAME}.zip" --clobber --repo "$GITHUB_REPOSITORY"

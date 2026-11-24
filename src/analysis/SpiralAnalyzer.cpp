@@ -24,7 +24,9 @@ void SpiralAnalyzer::prepare(double newSampleRate)
     hop = juce::jmax(256, static_cast<int>(sampleRate / 50.0));
     ring.assign(ringSize, 0.0f);
     longWindow = hann(longSize);
+    midWindow = hann(midSize);
     shortWindow = hann(shortSize);
+    tinyWindow = hann(tinySize);
     frame.assign(longSize, 0.0f);
     spectrum.assign(longSize / 2 + 1, {});
     logMag.assign(longSize / 2 + 1, 0.0);
@@ -105,8 +107,11 @@ void SpiralAnalyzer::analyse()
     std::vector<std::pair<double, double>> raw;
     raw.reserve(256);
     if (written >= longSize)
-        spectrumPeaks(longSize, longSize, longFftEngine, longWindow, 35.0, 260.0, raw);
-    spectrumPeaks(shortSize, shortFft, shortFftEngine, shortWindow, 260.0, 4200.0, raw);
+        spectrumPeaks(longSize, longSize, longFftEngine, longWindow, 35.0, 200.0, raw);
+    if (written >= midSize)
+        spectrumPeaks(midSize, longSize, longFftEngine, midWindow, 200.0, 700.0, raw);
+    spectrumPeaks(shortSize, longSize, longFftEngine, shortWindow, 700.0, 2000.0, raw);
+    spectrumPeaks(tinySize, tinyFft, tinyFftEngine, tinyWindow, 2000.0, 4200.0, raw);
 
     double maxPower = 0.0;
     for (const auto& r : raw)

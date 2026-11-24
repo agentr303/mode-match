@@ -78,8 +78,15 @@ ModeResult detectMode(const ModeInputs& in, const ModeRules& rules)
     }
 
     // 2. The tonic: score each of the collection's 7 notes from the bass, chord roots, its own weight, the support of
-    //    its fifth (when the fifth is in the collection) and agreement with NuvoDeck's tonic.
-    const Chroma bass = normalisedToMax(in.bass), roots = normalisedToMax(in.chordRoots);
+    //    its fifth (when the fifth is in the collection) and agreement with NuvoDeck's tonic. With a host timeline the
+    //    chords on downbeats and at phrase starts / ends count too (songs tend to start and close phrases on the tonic);
+    //    without one the weights stay as they were.
+    const Chroma bass = normalisedToMax(in.bass), roots = normalisedToMax(in.chordRoots), phrase = normalisedToMax(in.phraseRoots);
+    double phraseTotal = 0.0;
+    for (auto v : phrase)
+        phraseTotal += v;
+    const bool usePhrase = phraseTotal > 0.0;
+    const double wBass = usePhrase ? 0.30 : 0.35, wRoots = usePhrase ? 0.25 : 0.30, wPhrase = usePhrase ? 0.10 : 0.0;
     static const int majorSteps[7] = { 0, 2, 4, 5, 7, 9, 11 };
     std::array<double, 7> score {};
     for (int d = 0; d < 7; ++d)
@@ -87,8 +94,9 @@ ModeResult detectMode(const ModeInputs& in, const ModeRules& rules)
         const int t = (r.collection + majorSteps[d]) % 12;
         const int fifth = (t + 7) % 12;
         const bool fifthInSet = diatonic[(fifth - r.collection + 12) % 12] > 0.5;
-        score[static_cast<std::size_t>(d)] = 0.35 * bass[static_cast<std::size_t>(t)]
-                                           + 0.30 * roots[static_cast<std::size_t>(t)]
+        score[static_cast<std::size_t>(d)] = wBass * bass[static_cast<std::size_t>(t)]
+                                           + wRoots * roots[static_cast<std::size_t>(t)]
+                                           + wPhrase * phrase[static_cast<std::size_t>(t)]
                                            + 0.20 * chroma[static_cast<std::size_t>(t)]
                                            + 0.10 * (fifthInSet ? chroma[static_cast<std::size_t>(fifth)] : 0.0)
                                            + 0.05 * ((in.nuvoKey >= 0 && keyTonic(in.nuvoKey) == t) ? 1.0 : 0.0);

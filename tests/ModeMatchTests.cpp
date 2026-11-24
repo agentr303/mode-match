@@ -598,6 +598,216 @@ public:
             if (std::abs(p.midi - 40.0f) < 0.02f)
                 lowFound = true;
         expect(lowFound, "a partial at 40.00 (+-2 cents)");
+
+        beginTest("Every window: 300 Hz, 1 kHz and 3 kHz tones within 1 cent (8192, 4096 and 2048-point frames)");
+        for (const double f : { 300.0, 1000.0, 3000.0 })
+        {
+            Buffer t(static_cast<std::size_t>(rate), 0.0f);
+            addTone(t, rate, f, 0.5f, 0, static_cast<int>(t.size()), 1);
+            rk::SpiralAnalyzer sa;
+            sa.prepare(rate);
+            sa.push(t.data(), static_cast<int>(t.size()));
+            const float expected = static_cast<float>(69.0 + 12.0 * std::log2(f / 440.0));
+            float closest = 99.0f;
+            int near = 0;
+            for (const auto& p : sa.partials())
+            {
+                closest = std::min(closest, std::abs(p.midi - expected));
+                if (std::abs(p.midi - expected) < 0.5f)
+                    ++near;
+            }
+            expectLessThan(closest, 0.01f, juce::String(f) + " Hz within 1 cent");
+            expectEquals(near, 1, juce::String(f) + " Hz: one partial, not one per window");
+        }
+    }
+};
+
+// ================================================================================================================
+// Chord qualities, HMM smoothing, the percussion mask, bar positions, phrase evidence and the tuning scale.
+class AnalysisExtrasTests final : public juce::UnitTest
+{
+public:
+    AnalysisExtrasTests() : juce::UnitTest("Chords, smoothing and scales", "ModeMatch") {}
+
+    static double hz(double midi) { return 440.0 * std::pow(2.0, (midi - 69.0) / 12.0); }
+
+    // Streams audio without a timeline and returns the analyser (for its current chord and local key).
+    static void feed(rk::KeyAnalyzer& a, const Buffer& audio, double)
+    {
+        rk::HostPosition none;
+        for (int i = 0; i < static_cast<int>(audio.size()); i += 512)
+        {
+            const int n = juce::jmin(512, static_cast<int>(audio.size()) - i);
+            double e = 0.0;
+            for (int k = 0; k < n; ++k)
+                e += static_cast<double>(audio[static_cast<std::size_t>(i + k)]) * audio[static_cast<std::size_t>(i + k)];
+            a.process(audio.data() + i, n, none, e, 1, true);
+        }
+    }
+
+    void runTest() override
+    {
+        const double rate = 48000.0;
+
+        beginTest("Chord qualities: major, minor, 7, diminished, sus4");
+        {
+            struct Case { rk::ChordQuality q; std::array<int, 4> steps; int count; };
+            const Case cases[] = { { rk::ChordQuality::major, { 0, 4, 7, 0 }, 3 },
+                                   { rk::ChordQuality::minor, { 0, 3, 7, 0 }, 3 },
+                                   { rk::ChordQuality::dominant7, { 0, 4, 7, 10 }, 4 },
+                                   { rk::ChordQuality::diminished, { 0, 3, 6, 0 }, 3 },
+                                   { rk::ChordQuality::sus4, { 0, 5, 7, 0 }, 3 } };
+            for (const int root : { 0, 5, 10 })
+                for (const auto& c : cases)
+                {
+                    Buffer audio(static_cast<std::size_t>(3.0 * rate), 0.0f);
+                    for (int i = 0; i < c.count; ++i)
+                        addTone(audio, rate, hz(60 + root + c.steps[static_cast<std::size_t>(i)]), 0.12f, 0, static_cast<int>(audio.size()));
+                    addTone(audio, rate, hz(36 + root), 0.3f, 0, static_cast<int>(audio.size()));
+                    rk::KeyAnalyzer a;
+                    a.prepare(rate);
+                    feed(a, audio, rate);
+                    const int expected = rk::chordIndex(root, c.q);
+                    expectEquals(rk::chordName(a.currentChord()), rk::chordName(expected));
+                }
+        }
+
+        beginTest("Local key HMM: a modulation from C major to Eb major is followed, once");
+        {
+            Buffer audio;
+            for (int i = 0; i < 12; ++i)
+            {
+                const auto l = keyLoop(i < 6 ? 0 : 3, false, 0.0, rate); // 12 s of C major, then 12 s of Eb major
+                audio.insert(audio.end(), l.begin(), l.end());
+            }
+            const auto s = hostSummary(audio, rate, 120.0);
+            rk::KeyAnalyzer a;
+            a.prepare(rate);
+            feed(a, audio, rate);
+            expectEquals(rk::keyLongName(a.localKey()), juce::String("Eb major"), "local key at the end");
+            expectEquals(s.keyChanges, 1, "one key change on the key map");
+        }
+
+        beginTest("OnlineViterbi: a new state takes over once its evidence outweighs the switch cost");
+        {
+            rk::OnlineViterbi v;
+            v.reset(2);
+            int switchedAt = -1;
+            for (int t = 0; t < 40; ++t)
+            {
+                const int obs = t < 10 ? 0 : 1;
+                const int s = v.step([obs](int st) { return st == obs ? 0.0 : -1.0; }, [](int, int) { return 5.0; });
+                if (s == 1 && switchedAt < 0)
+                    switchedAt = t;
+            }
+            expectEquals(switchedAt, 15, "switch after 5 frames of the new state's evidence (cost 5, 1 per frame)");
+        }
+
+        beginTest("Percussion mask: noise bursts on every 8th note do not move the key or the chords");
+        {
+            Buffer audio;
+            for (int i = 0; i < 8; ++i)
+            {
+                const auto l = keyLoop(7, false, 0.0, rate); // G major
+                audio.insert(audio.end(), l.begin(), l.end());
+            }
+            juce::Random random(42);
+            const int step = static_cast<int>(0.25 * rate), burst = static_cast<int>(0.05 * rate);
+            for (int start = 0; start + burst < static_cast<int>(audio.size()); start += step)
+                for (int i = 0; i < burst; ++i)
+                    audio[static_cast<std::size_t>(start + i)] += 0.6f * (random.nextFloat() * 2.0f - 1.0f) * (1.0f - static_cast<float>(i) / burst);
+            rk::KeyAnalyzer a;
+            a.prepare(rate);
+            feed(a, audio, rate);
+            expectEquals(rk::keyLongName(a.localKey()), juce::String("G major"), "local key");
+            const auto s = a.computeSummary();
+            expectEquals(s.displayName(), juce::String("G major"), "song key");
+            int inKey = 0, total = 0;
+            for (const auto& [i, b] : a.bins())
+                if (b.chord >= 0)
+                {
+                    ++total;
+                    const int root = rk::chordRoot(b.chord);
+                    if (root == 7 || root == 0 || root == 2)
+                        ++inKey;
+                }
+            logMessage("chords on I / IV / V: " + juce::String(inKey) + " of " + juce::String(total));
+            expectGreaterOrEqual(inKey, total * 9 / 10, "at least 90 % of the chords are G, C or D");
+        }
+
+        beginTest("Bars from the host's bar lines (3/4, first bar line at beat 1)");
+        {
+            const auto loop = keyLoop(0, false, 0.0, rate);
+            rk::KeyAnalyzer a;
+            a.prepare(rate);
+            const double bpm = 120.0;
+            for (int i = 0; i < static_cast<int>(loop.size()); i += 512)
+            {
+                const int n = juce::jmin(512, static_cast<int>(loop.size()) - i);
+                rk::HostPosition pos;
+                pos.hasTimeline = pos.playing = true;
+                pos.bpm = bpm;
+                pos.seconds = i / rate;
+                pos.ppq = 1.0 + pos.seconds * bpm / 60.0;
+                pos.beatsPerBar = 3;
+                pos.hasBarStart = true;
+                pos.barStartPpq = 1.0 + 3.0 * std::floor((pos.ppq - 1.0) / 3.0);
+                a.process(loop.data() + i, n, pos, 1.0, 1, true);
+            }
+            bool allRight = true;
+            for (const auto& [index, b] : a.bins())
+                if (b.weight > 0.0f)
+                    allRight = allRight && b.beatsPerBar == 3 && b.barBeat == (index - 1) % 3;
+            expect(allRight, "beat in bar counted from the bar line");
+        }
+
+        beginTest("Phrase evidence breaks a tie between two tonics; without it the old weights stand");
+        {
+            rk::ModeInputs in;
+            for (int pc : { 0, 2, 4, 5, 7, 9, 11 })
+                in.chroma[static_cast<std::size_t>(pc)] = in.presence[static_cast<std::size_t>(pc)] = 1.0 / 7.0;
+            in.bass[0] = in.bass[9] = 1.0;
+            in.chordRoots[0] = in.chordRoots[9] = 1.0;
+            const auto without = rk::detectMode(in);
+            in.phraseRoots[9] = 1.0;
+            const auto with = rk::detectMode(in);
+            expectEquals(rk::noteName(without.tonic), juce::String("C"), "tie: the first candidate (as before)");
+            expectEquals(rk::noteName(with.tonic), juce::String("A"), "phrase starts / ends on A");
+        }
+
+        beginTest("Scale for tuning: harmonic minor when the raised 7th is played");
+        {
+            const auto minor = streamSummary(keyLoop(9, true, 0.0, rate), rate); // A minor, i iv V i: the V has G#
+            expectEquals(minor.tuningScale().name(), juce::String("A Harmonic Minor"));
+            expect(std::find(minor.tuningScale().notes.begin(), minor.tuningScale().notes.end(), 8) != minor.tuningScale().notes.end(), "G# in the scale");
+            expectEquals(minor.tuningScale().clipboardText(), juce::String("A Harmonic Minor (A B C D E F G#)"));
+            const auto major = streamSummary(keyLoop(0, false, 0.0, rate), rate);
+            expectEquals(major.tuningScale().name(), juce::String("C Major"));
+        }
+
+        beginTest("Saved maps from 0.1.0 (RKT1) still load");
+        {
+            juce::MemoryOutputStream out;
+            out.writeInt(0x524b5431);
+            out.writeInt(1);
+            out.writeInt(0);
+            rk::TimelineBin b;
+            b.fine[0] = 1.0f;
+            out.write(b.fine.data(), sizeof(float) * b.fine.size());
+            out.write(b.bass.data(), sizeof(float) * b.bass.size());
+            out.write(b.fund.data(), sizeof(float) * b.fund.size());
+            for (double v : { 1.0, 0.0, 1.0, 1.0, 1.0, 0.0 })
+                out.writeDouble(v);
+            out.writeInt(0);
+            out.writeInt(0);
+            out.writeFloat(1.0f);
+            rk::KeyAnalyzer a;
+            a.prepare(rate);
+            juce::MemoryInputStream in(out.getData(), out.getDataSize(), false);
+            expect(a.readFrom(in), "RKT1 reads");
+            expectEquals(static_cast<int>(a.bins().size()), 1);
+            expectEquals(a.bins().begin()->second.barBeat, -1, "no bar position in old maps");
+        }
     }
 };
 
@@ -606,6 +816,7 @@ static TimelineTests timelineTests;
 static BassTonicTests bassTonicTests;
 static ModeTests modeTests;
 static SpiralTests spiralTests;
+static AnalysisExtrasTests analysisExtrasTests;
 
 struct ConsoleLogger final : juce::Logger
 {

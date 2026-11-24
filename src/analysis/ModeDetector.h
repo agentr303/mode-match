@@ -44,6 +44,7 @@ struct ModeInputs
     Chroma presence {};     // share of each pitch class, sums to 1
     Chroma bass {};         // chroma of peaks below ~250 Hz
     Chroma chordRoots {};   // time spent on chords rooted on each pitch class
+    Chroma phraseRoots {};  // chord roots on downbeats, phrase starts and phrase ends (host timeline only; may be empty)
     int nuvoKey = -1;       // NuvoDeck's major/minor answer (key index)
 };
 

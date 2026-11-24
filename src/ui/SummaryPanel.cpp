@@ -97,12 +97,24 @@ void CamelotWheel::paint(juce::Graphics& g)
 SummaryPanel::SummaryPanel()
 {
     addAndMakeVisible(wheel);
+    copyButton.setTooltip("Copy the scale for Melodyne / Auto-Tune (name and notes)");
+    copyButton.setColour(juce::TextButton::buttonColourId, theme::well);
+    copyButton.setColour(juce::TextButton::textColourOffId, theme::ink);
+    copyButton.onClick = [this]
+    {
+        if (data.summary.valid)
+            juce::SystemClipboard::copyTextToClipboard(data.summary.tuningScale().clipboardText());
+    };
+    addChildComponent(copyButton);
 }
 
-void SummaryPanel::update(const Snapshot& s, ViewMode mode)
+void SummaryPanel::update(const Snapshot& s, ViewMode mode, const juce::String& newTrackName, int newTrackKey)
 {
     data = s;
     viewMode = mode;
+    trackName = newTrackName;
+    trackKey = newTrackKey;
+    copyButton.setVisible(data.summary.valid);
     wheel.setKey(data.summary.valid ? data.summary.displayCamelotKey() : -1, data.localKey);
     repaint();
 }
@@ -110,7 +122,8 @@ void SummaryPanel::update(const Snapshot& s, ViewMode mode)
 void SummaryPanel::resized()
 {
     auto r = getLocalBounds().reduced(16);
-    textArea = r.removeFromTop(juce::jmin(r.getHeight(), 236));
+    textArea = r.removeFromTop(juce::jmin(r.getHeight(), 282));
+    copyButton.setBounds(textArea.getRight() - 54, textArea.getY() + scaleRowY, 54, 19);
     r.removeFromTop(6);
     const int barsHeight = r.getHeight() > 260 ? 84 : (r.getHeight() > 120 ? 64 : 0);
     barsArea = r.removeFromTop(barsHeight);
@@ -135,6 +148,9 @@ void SummaryPanel::paint(juce::Graphics& g)
         g.setColour(theme::amber);
         g.drawText("LOCKED", header, juce::Justification::right);
     }
+    else if (data.ara)
+        g.drawText("ARA: " + juce::String(data.araSources) + " of " + juce::String(data.araSourcesTotal) + " clips analysed", header,
+                   juce::Justification::right);
     else if (s.valid)
         g.drawText(juce::String(s.analysedBins) + (data.hostTimeline ? " beats" : " x 0.5 s") + " analysed", header, juce::Justification::right);
 
@@ -210,6 +226,17 @@ void SummaryPanel::paint(juce::Graphics& g)
         g.setFont(theme::font(13.0f, true));
         g.drawText(value, line, juce::Justification::centredLeft);
     };
+    const auto scale = s.tuningScale();
+    {
+        auto line = r.removeFromTop(19);
+        g.setColour(theme::mute);
+        g.setFont(theme::font(12.0f));
+        g.drawText("Scale", line.removeFromLeft(110), juce::Justification::centredLeft);
+        line.removeFromRight(60); // the Copy button
+        g.setColour(theme::amber);
+        g.setFont(theme::font(13.0f, true));
+        g.drawText(scale.name() + "   " + scale.spelledNotes().joinIntoString(" "), line, juce::Justification::centredLeft, true);
+    }
     row("Relative", keyLongName(relativeKey(s.majorMinorKey)) + "  " + camelotCode(relativeKey(s.majorMinorKey)), theme::ink);
     // When the bass and chord roots overruled the profile match, the profile's answer is the alternative to show.
     if (s.majorMinorKey != s.key)
@@ -217,9 +244,18 @@ void SummaryPanel::paint(juce::Graphics& g)
                                  + noteName(keyTonic(s.majorMinorKey)) + ")", theme::ink);
     else
         row("Runner-up", keyLongName(s.runnerUp) + "  " + camelotCode(s.runnerUp) + "  (r " + juce::String(s.r, 2) + " vs " + juce::String(s.r2, 2) + ")", theme::ink);
-    row("Tuning", (s.tuningCents >= 0.0 ? "+" : "") + juce::String(s.tuningCents, 1) + " cents from A440", std::abs(s.tuningCents) > 15.0 ? theme::amber : theme::ink);
+    row("Tuning", (s.tuningCents >= 0.0 ? "+" : "") + juce::String(s.tuningCents, 1) + " cents  (A4 = " + juce::String(440.0 * std::pow(2.0, s.tuningCents / 1200.0), 1)
+                      + " Hz)", std::abs(s.tuningCents) > 15.0 ? theme::amber : theme::ink);
     row("Heard now", keyLongName(data.localKey) + "  " + camelotCode(data.localKey) + "   chord " + theme::chordName(data.chord), theme::keyColour(data.localKey));
     row("Key changes", juce::String(s.keyChanges), s.keyChanges > 0 ? theme::amber : theme::ink);
+    // The track name's Camelot label, as a cross-check (never overriding the analysis).
+    if (trackKey >= 0)
+    {
+        const int shown = s.displayCamelotKey();
+        const bool agrees = toMusicalKey(trackKey).camelotNumber() == toMusicalKey(shown).camelotNumber() && keyIsMinor(trackKey) == keyIsMinor(shown);
+        row("Track name", camelotCode(trackKey) + " " + keyLongName(trackKey) + (agrees ? "  (agrees)" : "  (differs)") + "  \"" + trackName + "\"",
+            agrees ? theme::green : theme::amber);
+    }
 
     // Presence of each pitch class across the song, scale notes in the key colour.
     if (! barsArea.isEmpty())
