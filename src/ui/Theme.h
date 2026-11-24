@@ -46,10 +46,5 @@ inline void drawPanel(juce::Graphics& g, juce::Rectangle<float> r)
     g.drawRoundedRectangle(r.reduced(0.5f), 10.0f, 1.0f);
 }
 
-inline juce::String chordName(int chord)
-{
-    if (chord < 0)
-        return "-";
-    return noteName(chord % 12) + (chord >= 12 ? "m" : "");
-}
+inline juce::String chordName(int chord) { return rk::chordName(chord); }
 } // namespace rk::theme

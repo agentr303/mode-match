@@ -55,6 +55,11 @@ TopBar::TopBar(ModeMatchProcessor& p) : processor(p)
     clearButton.onClick = [this] { processor.requestClear(); };
     addAndMakeVisible(clearButton);
 
+    menuButton.setLookAndFeel(&look);
+    menuButton.setTooltip("Presets, spiral layout, transposition, MIDI out, GPU drawing and About");
+    menuButton.onClick = [this] { showMenu(); };
+    addAndMakeVisible(menuButton);
+
     a4Slider.setLookAndFeel(&look);
     a4Slider.setRange(415.0, 466.0, 0.1);
     a4Slider.setTextValueSuffix(" Hz");
@@ -84,12 +89,52 @@ void TopBar::resized()
     const bool narrow = getWidth() < 900;
     titleArea = r.removeFromLeft(narrow ? 110 : 190);
     meterArea = r.removeFromRight(narrow ? 40 : 90).reduced(6, 10);
+    menuButton.setBounds(r.removeFromRight(narrow ? 76 : 90).reduced(3, 2));
     clearButton.setBounds(r.removeFromRight(narrow ? 84 : 100).reduced(3, 2));
     a4Slider.setBounds(r.removeFromRight(narrow ? 96 : 130).reduced(3, 4));
     r.removeFromRight(8);
     const int w = juce::jmin(narrow ? 72 : 92, r.getWidth() / 4);
     for (auto& b : modeButtons)
         b.setBounds(r.removeFromLeft(w).reduced(3, 2));
+}
+
+void TopBar::showMenu()
+{
+    using namespace rk;
+    juce::PopupMenu presetMenu, topMenu, rangeMenu, transposeMenu, midiMenu;
+    for (int i = 0; i < processor.getNumPrograms(); ++i)
+        presetMenu.addItem(processor.getProgramName(i), true, processor.getCurrentProgram() == i, [this, i] { processor.setCurrentProgram(i); syncFromProcessor(); });
+    for (int pc = 0; pc < 12; ++pc)
+        topMenu.addItem(noteName(pc), true, processor.getTopNote() == pc, [this, pc] { processor.setTopNote(pc); });
+    for (int i = 0; i < static_cast<int>(spiralRanges.size()); ++i)
+        rangeMenu.addItem(spiralRanges[static_cast<std::size_t>(i)].name, true, processor.getRangeIndex() == i, [this, i] { processor.setRangeIndex(i); });
+    for (int i = 0; i < static_cast<int>(transpositions.size()); ++i)
+        transposeMenu.addItem(transpositions[static_cast<std::size_t>(i)].name, true, processor.getTransposition() == i,
+                              [this, i] { processor.setTransposition(i); });
+    transposeMenu.addSeparator();
+    transposeMenu.addItem("Clear the target note", processor.getTuneTarget() >= 0, false, [this] { processor.setTuneTarget(-1); });
+    const auto midi = processor.getMidiOut();
+    midiMenu.addItem("Off", true, midi == MidiOut::off, [this] { processor.setMidiOut(MidiOut::off); });
+    midiMenu.addItem("Key switch (tonic note C1-B1, CC 20 = scale type)", true, midi == MidiOut::keySwitch,
+                     [this] { processor.setMidiOut(MidiOut::keySwitch); });
+    midiMenu.addItem("Scale notes (held, C4-B4)", true, midi == MidiOut::scaleNotes, [this] { processor.setMidiOut(MidiOut::scaleNotes); });
+
+    juce::PopupMenu menu;
+    menu.addSubMenu("Presets", presetMenu);
+    menu.addSeparator();
+    menu.addSubMenu("Spiral: note at the top", topMenu);
+    menu.addSubMenu("Spiral: range", rangeMenu);
+    menu.addSubMenu("Tune mode: transposing instrument", transposeMenu);
+    menu.addSubMenu("MIDI out (channel 1)", midiMenu);
+    menu.addItem("GPU drawing (OpenGL)", true, processor.getGpuEnabled(), [this]
+    {
+        processor.setGpuEnabled(! processor.getGpuEnabled());
+        if (onGpuChanged != nullptr)
+            onGpuChanged();
+    });
+    menu.addSeparator();
+    menu.addItem("About Mode Match...", [this] { if (onAbout != nullptr) onAbout(); });
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&menuButton));
 }
 
 void TopBar::paint(juce::Graphics& g)

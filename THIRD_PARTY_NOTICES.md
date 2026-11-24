@@ -16,6 +16,19 @@ Fetched by CMake, not included in this repository. JUCE is dual-licensed under A
 ### VST3 SDK
 Included with JUCE. MIT License (VST3 SDK 3.8+). "VST" is a trademark of Steinberg Media Technologies GmbH.
 
+### ARA Audio Random Access SDK 2.3.0 (ARA API and ARA Library)
+Fetched by CMake when `MM_ENABLE_ARA` is on (the default) and compiled into the plugin. Copyright Celemony Software
+GmbH. Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0); the licence text ships in the release
+downloads as `ARA-LICENSE.txt`. ARA is a trademark of Celemony Software GmbH.
+
+### CLAP and clap-helpers
+Fetched with clap-juce-extensions when `MM_ENABLE_CLAP` is on (the default) and compiled into the CLAP plugin.
+Copyright (c) 2021 Alexandre Bique. MIT License (in the release downloads as `CLAP-LICENSE.txt`).
+
+### clap-juce-extensions
+Fetched by CMake (https://github.com/free-audio/clap-juce-extensions); builds the CLAP version from the JUCE plugin.
+Copyright 2019-2020 Paul Walker. MIT License (in the release downloads as `clap-juce-extensions-LICENSE.txt`).
+
 ## Research data
 
 The key-profile weights come from published research:

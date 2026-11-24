@@ -1,6 +1,6 @@
 # Mode Match — plugin plan
 
-A VST3 / AU / AAX / CLAP plugin (plus standalone) that shows **what is sounding right now** on a pitch spiral and **what key the whole piece is in** in one window. The spiral is drawn on top of the summative key, so every live note shows at a glance whether it is inside the song's scale.
+A VST3 / AU / CLAP plugin (plus standalone; no AAX, decided 2026-11-24) that shows **what is sounding right now** on a pitch spiral and **what key the whole piece is in** in one window. The spiral is drawn on top of the summative key, so every live note shows at a glance whether it is inside the song's scale.
 
 Interactive mockup: see the published artifact (mockup + condensed plan).
 
@@ -140,12 +140,12 @@ NuvoDeck answers only major or minor. A Dorian vamp (Dm7–G) usually comes back
 - **Benchmarks**: on top of the ported unit tests, GiantSteps Key, scored with the MIREX weighted key score.
 
 ## 5. Tech stack
-- C++20, **JUCE 9.0.1** (VST3, AU, AAX, Standalone) + clap-juce-extensions (CLAP). Built so far: VST3 + Standalone (Windows), AU from the same CMake on macOS.
+- C++20, **JUCE 9.0.1** (VST3, AU, Standalone) + clap-juce-extensions (CLAP). No AAX. All four build on Windows (AU: macOS only) and in CI.
 - FFT: signalsmith-linear (the one NuvoDeck's KeyDetector already uses), for both engines.
 - GPU UI: JUCE OpenGL context (or visage) for the spiral; CPU fallback ("Reduce GPU usage").
 - ARA SDK 2.x for offline analysis.
 - Tests: Catch2 for DSP units; pluginval in CI; Python scripts for dataset evaluation.
-- CI: GitHub Actions, Windows + macOS universal builds, code signing / notarization.
+- CI: GitHub Actions, Windows + macOS universal builds, pluginval + auval, Developer ID signing / notarization when the secrets are set.
 
 ## 6. Milestones
 
@@ -155,7 +155,7 @@ NuvoDeck answers only major or minor. A Dorian vamp (Dm7–G) usually comes back
 4. **Summative panel + timeline (3 wks)**: host-position timeline map, note presence, key lane, chord lane, Lock mode, state save/recall.
 5. **Tune mode + workflow (2 wks)**: target note, zoomed ruler, transposing instruments, copy-scale, presets.
 6. **ARA 2 + MIDI out (3 wks)**: offline whole-clip analysis; optional MIDI key-switch / scale output for downstream plugins.
-7. **Beta (4 wks)**: pluginval, DAW matrix (Ableton, Logic, FL, Cubase, Pro Tools, Reaper, Bitwig, Studio One), performance tuning, docs.
+7. **Beta (4 wks)**: pluginval, DAW matrix (Ableton, Logic, FL, Cubase, Reaper, Bitwig, Studio One), performance tuning, docs.
 
 ## 7. Risks
 - **IP**: Snail's analysis is patented; MIK's algorithm is proprietary. Key detection is our own (NuvoDeck). The spiral uses the same magnitude-only peak method, so no FFT phase is used anywhere. "Camelot" is a Mixed In Key trademark: we show the codes (as NuvoDeck does) but don't use the name in branding, and the docs credit the trademark.
@@ -175,18 +175,37 @@ NuvoDeck answers only major or minor. A Dorian vamp (Dm7–G) usually comes back
 
 | Item | Status / action |
 |---|---|
-| Product name | "Radial Key" dropped: Radial Engineering Ltd. is an established pro-audio brand. **Now "Mode Match"**: run a trademark clearance search (classes 9 and 42) before release. |
-| The Snail patent FR 1455456 / EP 3155609 B1 (CNRS, licensed to IRCAM) | The claims centre on **demodulated FFT phase** and its frame-to-frame stability. Our engines use magnitudes only (NuvoDeck's method) plus time-domain pitch for the tuner, so they stay outside that core. Remaining question for counsel: whether showing a spiral display of spectral peaks alone touches any claim. Check status per country (filed 2014 → ~2034). |
+| Product name | "Radial Key" dropped: Radial Engineering Ltd. is an established pro-audio brand. **Now "Mode Match": trademark check came back clear (2026-11-24).** |
+| The Snail patent FR 1455456 / EP 3155609 B1 (CNRS, licensed to IRCAM) | The claims centre on **demodulated FFT phase** and its frame-to-frame stability. Our engines use magnitudes only (NuvoDeck's method) plus time-domain pitch for the tuner, so they stay outside that core. **Cleared (2026-11-24)**, including the spiral display. Keep the engines phase-free. |
 | The Snail look | Pitch spirals are old public-domain ideas (Drobisch 1855, Shepard). Keep our own visual language: no rotating hexagon, no "milky moustache", no copied colors or layout. |
 | Mixed In Key | No code or assets copied. Features (key, note %, key changes) are ideas, which copyright doesn't protect. Run a quick patent search on key-change and realtime key display. |
-| "Camelot" | MIK trademark. Codes are used descriptively (as NuvoDeck already does). Keep "Camelot" out of the product name and marketing headlines. The trademark credit is in THIRD_PARTY_NOTICES.md; add it to the about box too. |
+| "Camelot" | MIK trademark. Codes are used descriptively (as NuvoDeck already does). Keep "Camelot" out of the product name and marketing headlines. The trademark credit is in THIRD_PARTY_NOTICES.md and the About box. |
 | NuvoDeck code | Confirm you own it outright (no employer/client claim, no third-party code inside apart from listed libraries). |
 | Key profiles (Temperley, Krumhansl) | Published research data. Fine to use; cite in docs. |
 | JUCE | **Mode Match is AGPLv3** (LICENSE), so it uses JUCE's AGPLv3 option. NuvoDeck keeps its own JUCE licence. |
 | Open source vs NuvoDeck | The author owns all shared code, so licensing it AGPLv3 here leaves NuvoDeck closed. Copy shared code NuvoDeck → Mode Match only; outside contributions need the CONTRIBUTING.md terms (relicence grant) before any of them can go back into NuvoDeck. |
 | VST3 SDK | MIT since VST3 SDK 3.8 (the copy bundled with JUCE 9). The VST logo/name still needs Steinberg's usage guidelines. |
-| AAX | Avid developer agreement + PACE signing. |
-| ARA 2 SDK | Apache 2.0, keep the notice. |
-| CLAP / clap-juce-extensions | MIT, keep the notices. |
-| signalsmith-linear | **Done here:** upstream MIT confirmed; `LICENSE.txt` + modification note in `third_party/signalsmith-linear/`, listed in THIRD_PARTY_NOTICES.md. Still to do: add the same LICENSE to NuvoDeck, and show the notices in an about box once the plugin has one. |
+| AAX | Not made (decided 2026-11-24), so no Avid developer agreement or PACE signing. |
+| ARA 2 SDK | Apache 2.0. Notice in THIRD_PARTY_NOTICES.md; its licence ships in the release zips. |
+| CLAP / clap-juce-extensions | MIT. Notices in THIRD_PARTY_NOTICES.md; licences ship in the release zips. |
+| signalsmith-linear | **Done here:** upstream MIT confirmed; `LICENSE.txt` + modification note in `third_party/signalsmith-linear/`, listed in THIRD_PARTY_NOTICES.md and shown in the About box. Still to do: add the same LICENSE to NuvoDeck. |
 | Fonts | Mockup fonts are SIL OFL; fine to embed with the licence text if used in the plugin. |
+
+## 10. Status (2026-11-24)
+
+Built: everything in sections 2-4 and milestones 1-6, except AAX (dropped). Notes on how some items were done:
+- **Local key and chords**: online Viterbi HMMs (24 keys, cost by Camelot distance, relative key dearest; 60 chords:
+  major, minor, 7, diminished, sus4).
+- **HPSS**: the percussive (frequency-median) half only, as a soft mask on the chord / local-key path. The time-median
+  half cannot separate hits at a 4096 hop with 16384-sample frames. The song-key chroma stays KeyDetector's.
+- **Tonic evidence**: downbeats and 4-bar phrase starts / ends count when the host gives bar lines.
+- **Harmonic / melodic minor**: a refinement of the shown scale from note presence, not extra collections in the
+  mode stage.
+- **Multi-resolution spiral**: 16384 / 8192 / 4096 / 2048 with 2-4x zero-padding; no separate bias correction (the
+  padding keeps the log-parabola's Hann bias under 1 cent above 200 Hz, tested).
+- **ARA 2**: each audio source analysed once offline; an instance shows the merge of its regions. Not yet tried in an
+  ARA host.
+- **GiantSteps**: `tools/giantsteps_benchmark.py`; not yet run (the dataset audio is downloaded separately).
+- **Shared analysis thread pool** across instances: not done; one low-priority thread per instance, the spiral engine
+  sleeping while the editor is closed.
+- DAW matrix testing (milestone 7) still to do.

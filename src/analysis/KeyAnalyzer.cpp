@@ -33,6 +33,8 @@ bool KeyFrameAnalyzer::analyse(const float* frame, double sampleRate, std::vecto
             peakPower = std::max(peakPower, power);
         logMagnitude[static_cast<std::size_t>(bin)] = 0.5 * std::log(power + 1.0e-30);
     }
+    validFirst = firstBin - 3;
+    validLast = lastBin + 3;
     if (peakPower <= 1.0e-12)
         return false; // silence
     const double floorPower = peakPower * 1.0e-5; // 50 dB under the loudest
@@ -61,6 +63,7 @@ bool KeyFrameAnalyzer::analyse(const float* frame, double sampleRate, std::vecto
         const int lowFirst = juce::jmax(3, static_cast<int>(std::floor(35.0 * frameSize / sampleRate)));
         for (int bin = lowFirst - 3; bin < firstBin - 3; ++bin)
             logMagnitude[static_cast<std::size_t>(bin)] = 0.5 * std::log(std::norm(std::complex<double>(freq[static_cast<std::size_t>(bin)])) + 1.0e-30);
+        validFirst = lowFirst - 3;
         for (int bin = lowFirst; bin < firstBin; ++bin)
         {
             const double a = logMagnitude[static_cast<std::size_t>(bin - 1)], b = logMagnitude[static_cast<std::size_t>(bin)],
@@ -134,19 +137,29 @@ int majorMinorKeyFor(const ModeResult& mode, double tonicMajor, double tonicMino
     return scores[static_cast<std::size_t>(minor)] >= scores[static_cast<std::size_t>(major)] ? minor : major;
 }
 
-// Time on major / minor chords rooted on `tonic` (chord = root + 12 * quality, 0 major, 1 minor).
+// Time on major-type / minor-type chords rooted on `tonic` (major and 7; minor and diminished).
 template <typename Chords>
 std::pair<double, double> tonicChordQualities(const Chords& chords, int tonic)
 {
     double major = 0.0, minor = 0.0;
     for (const int c : chords)
-        if (c >= 0 && tonic >= 0 && c % 12 == tonic)
-            (c >= 12 ? minor : major) += 1.0;
+        if (c >= 0 && tonic >= 0 && chordRoot(c) == tonic)
+        {
+            if (chordIsMajorType(c))
+                major += 1.0;
+            else if (chordIsMinorType(c))
+                minor += 1.0;
+        }
     return { major, minor };
 }
 
-int bestChord(const Chroma& c, const Chroma& bass)
+// Template scores for every chord (root + 12 * quality), in units of the loudest pitch class. Major and minor are
+// scored as before (root, third, fifth, minus a share of the total; the root counts as the louder of its chroma and its
+// bass share, plus a bonus for being the bass note). The others build on them and need their own note clearly there:
+// 7 adds the flat 7th, diminished swaps the fifth for the flat 5th, sus4 swaps the third for the 4th.
+std::array<double, 12 * numChordQualities> chordScores(const Chroma& c, const Chroma& bass)
 {
+    std::array<double, 12 * numChordQualities> out {};
     double total = 0.0, cMax = 0.0, bassMax = 0.0;
     for (auto v : c)
     {
@@ -155,26 +168,30 @@ int bestChord(const Chroma& c, const Chroma& bass)
     }
     for (auto v : bass)
         bassMax = std::max(bassMax, v);
-    if (total <= 0.0)
-        return -1;
+    if (total <= 0.0 || cMax <= 0.0)
+        return out;
     constexpr double bassRootBonus = 0.25; // in units of the loudest pitch class
-    int best = -1;
-    double bestScore = -1e9;
+    const auto at = [&c](int pc) { return c[static_cast<std::size_t>(pc % 12)]; };
     for (int root = 0; root < 12; ++root)
-        for (int q = 0; q < 2; ++q)
-        {
-            const int third = (root + (q == 0 ? 4 : 3)) % 12, fifth = (root + 7) % 12;
-            const double bassShare = bassMax > 0.0 ? cMax * bass[static_cast<std::size_t>(root)] / bassMax : 0.0;
-            const double rootPresence = std::max(c[static_cast<std::size_t>(root)], bassShare);
-            const double s = rootPresence * 1.1 + c[static_cast<std::size_t>(third)] + c[static_cast<std::size_t>(fifth)]
-                             - 0.25 * total / 4.0 + bassRootBonus * bassShare;
-            if (s > bestScore)
-            {
-                bestScore = s;
-                best = root + 12 * q;
-            }
-        }
-    return best;
+    {
+        const double bassShare = bassMax > 0.0 ? cMax * bass[static_cast<std::size_t>(root)] / bassMax : 0.0;
+        const double base = std::max(at(root), bassShare) * 1.1 - 0.25 * total / 4.0 + bassRootBonus * bassShare;
+        const double major = base + at(root + 4) + at(root + 7);
+        const double minor = base + at(root + 3) + at(root + 7);
+        // 7: the flat 7th must reach 60 % of the triad's weaker note and beat the major 7th (the 3rd harmonic of the
+        // fifth). Diminished and sus4 put their note in place of the fifth / third; they compete only when that note is
+        // clearly there (40 % of the loudest class) and louder than the note it replaces, so a lone note or a thin
+        // triad is not read as one.
+        const double dom7 = major + 0.8 * (at(root + 10) - 0.6 * std::min(at(root + 4), at(root + 7))) - 0.3 * at(root + 11);
+        constexpr double off = -1.0e3;
+        const double dim = at(root + 6) >= 0.4 * cMax && at(root + 6) > at(root + 7) ? base + at(root + 3) + at(root + 6) : off * cMax;
+        const double sus4 = at(root + 5) >= 0.4 * cMax && at(root + 5) > std::max(at(root + 3), at(root + 4)) ? base + at(root + 5) + at(root + 7)
+                                                                                                               : off * cMax;
+        const double scores[] = { major, minor, dom7, dim, sus4 };
+        for (int q = 0; q < numChordQualities; ++q)
+            out[static_cast<std::size_t>(root + 12 * q)] = scores[q] / cMax;
+    }
+    return out;
 }
 } // namespace
 
@@ -206,6 +223,9 @@ void KeyAnalyzer::prepare(double newSampleRate)
     freeRunSeconds = 0.0;
     lastBin = INT_MIN;
     wasPlaying = false;
+    keyHmm.reset(24);
+    chordHmm.reset(12 * numChordQualities);
+    smoothedLocalKey = rawLocalKey = chordNow = -1;
 }
 
 void KeyAnalyzer::clear()
@@ -213,9 +233,10 @@ void KeyAnalyzer::clear()
     timeline.clear();
     ++pass;
     lastBin = INT_MIN;
-    smoothedLocalKey = rawLocalKey = candidateKey = -1;
-    candidateRun = 0;
+    smoothedLocalKey = rawLocalKey = -1;
     chordNow = -1;
+    keyHmm.reset(24);
+    chordHmm.reset(12 * numChordQualities);
     recentFrames.clear();
     recentBass.clear();
     recentChords.clear();
@@ -361,12 +382,13 @@ void KeyAnalyzer::analyseFrame(juce::int64 frameStart, int validSamples)
     Chroma frameBass {};
     for (const auto& pk : peaks)
     {
-        foldPeak(pk.midi, strong(pk.weight), runOffset, frameChroma);
+        const double w = strong(pk.weight) * percussionMask(pk.midi);
+        foldPeak(pk.midi, w, runOffset, frameChroma);
         if (pk.midi < bassMidiLimit)
-            foldPeak(pk.midi, strong(pk.weight), runOffset, frameBass);
+            foldPeak(pk.midi, w, runOffset, frameBass);
     }
     for (const auto& pk : lowPeaks)
-        foldPeak(pk.midi, strong(pk.weight), runOffset, frameBass);
+        foldPeak(pk.midi, strong(pk.weight) * percussionMask(pk.midi), runOffset, frameBass);
     updateLocalKeyAndChord(frameChroma, frameBass);
 
     // File the peaks in the timeline bin under the frame's centre.
@@ -374,7 +396,8 @@ void KeyAnalyzer::analyseFrame(juce::int64 frameStart, int validSamples)
     const Marker* m = markerFor(centre);
     if (m == nullptr || ! m->accumulate)
         return;
-    const int bin = binIndexFor(beatAt(*m, centre));
+    const double frameBeat = beatAt(*m, centre);
+    const int bin = binIndexFor(frameBeat);
     auto& b = timeline[bin];
     if (m->pass > b.pass)
     {
@@ -409,6 +432,39 @@ void KeyAnalyzer::analyseFrame(juce::int64 frameStart, int validSamples)
     b.im += fim;
     b.localKey = smoothedLocalKey;
     b.chord = chordNow;
+    if (m->position.hasTimeline)
+    {
+        // Bar and beat in the bar, from the host's last bar line (else bars counted from beat 0).
+        const int bpb = juce::jmax(1, m->position.beatsPerBar);
+        const double barStart = m->position.hasBarStart ? m->position.barStartPpq : 0.0;
+        const double beatIndex = std::floor(frameBeat + 1.0e-9);
+        const double barsAfter = std::floor((beatIndex - barStart) / bpb);
+        b.bar = static_cast<int>(std::lround(barStart / bpb) + static_cast<long>(barsAfter));
+        b.barBeat = juce::jlimit(0, bpb - 1, static_cast<int>(beatIndex - barStart - barsAfter * bpb));
+        b.beatsPerBar = bpb;
+    }
+}
+
+double KeyAnalyzer::percussionMask(double midi) const
+{
+    // The percussive half of median-filter HPSS (Fitzgerald 2010), per peak: the frame's median log magnitude over
+    // +-16 bins (~+-47 Hz at 48 kHz) stands for broadband (drum) energy there. A tonal peak stands well above it and
+    // keeps its weight; a peak that barely clears a drum hit's spectrum is scaled down: H^2 / (H^2 + (4P)^2).
+    // The horizontal (time) half is left out: with 16384-sample frames every 4096 a hit spans four frames, so a time
+    // median cannot tell it from a note. Only the chord / local-key path uses it; the song-key chroma stays KeyDetector's.
+    const auto& logMag = frameAnalyzer.logMagnitudes();
+    const double hz = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
+    const int bin = static_cast<int>(std::lround(hz * KeyFrameAnalyzer::frameSize / sampleRate));
+    const int lo = juce::jmax(frameAnalyzer.firstValidBin(), bin - 16), hi = juce::jmin(frameAnalyzer.lastValidBin(), bin + 16);
+    if (bin < lo || bin > hi || hi - lo < 8)
+        return 1.0;
+    std::array<double, 33> values {};
+    int n = 0;
+    for (int k = lo; k <= hi; ++k)
+        values[static_cast<std::size_t>(n++)] = logMag[static_cast<std::size_t>(k)];
+    std::nth_element(values.begin(), values.begin() + n / 2, values.begin() + n);
+    const double ratio = std::exp(logMag[static_cast<std::size_t>(bin)] - values[static_cast<std::size_t>(n / 2)]); // H / P
+    return ratio * ratio / (ratio * ratio + 16.0);
 }
 
 bool KeyAnalyzer::isOvertone(const Peak& pk) const
@@ -435,7 +491,6 @@ void KeyAnalyzer::updateLocalKeyAndChord(const Chroma& frameChroma, const Chroma
 {
     const auto framesPerSecond = sampleRate / KeyFrameAnalyzer::hopSize;
     const auto window = static_cast<std::size_t>(juce::jmax(4.0, 15.0 * framesPerSecond)); // 15 s
-    const int holdFrames = juce::jmax(2, static_cast<int>(4.0 * framesPerSecond));          // a new key must hold 4 s
     const std::size_t chordFrames = static_cast<std::size_t>(juce::jmax(2.0, 0.5 * framesPerSecond));
 
     recentFrames.push_back(frameChroma);
@@ -461,7 +516,20 @@ void KeyAnalyzer::updateLocalKeyAndChord(const Chroma& frameChroma, const Chroma
             if (i + chordFrames >= recentFrames.size())
                 recent[static_cast<std::size_t>(k)] += recentFrames[i][static_cast<std::size_t>(k)];
         }
-    chordNow = bestChord(recent, recentBassSum);
+    // The chord: template scores over the last half second, smoothed by a 60-state HMM (12 roots x 5 qualities);
+    // switching costs one unit, about one frame of a clearly better template.
+    {
+        double recentTotal = 0.0;
+        for (auto v : recent)
+            recentTotal += v;
+        if (recentTotal > 0.0)
+        {
+            const auto scores = chordScores(recent, recentBassSum);
+            chordNow = chordHmm.step([&scores](int st) { return scores[static_cast<std::size_t>(st)]; }, [](int, int) { return 1.0; });
+        }
+        else
+            chordNow = -1;
+    }
     recentChords.push_back(chordNow);
     while (recentChords.size() > window)
         recentChords.pop_front();
@@ -471,7 +539,7 @@ void KeyAnalyzer::updateLocalKeyAndChord(const Chroma& frameChroma, const Chroma
     Chroma roots {}, share {};
     for (const int c : recentChords)
         if (c >= 0)
-            roots[static_cast<std::size_t>(c % 12)] += 1.0;
+            roots[static_cast<std::size_t>(chordRoot(c))] += 1.0;
     double sumTotal = 0.0;
     for (auto v : sum)
         sumTotal += v;
@@ -479,33 +547,21 @@ void KeyAnalyzer::updateLocalKeyAndChord(const Chroma& frameChroma, const Chroma
         for (int k = 0; k < 12; ++k)
             share[static_cast<std::size_t>(k)] = sum[static_cast<std::size_t>(k)] / sumTotal;
     const int profileKey = bestTwoKeys(keyScores(sum)).first;
-    const auto localMode = detectMode({ share, share, windowBass, roots, profileKey });
+    const auto localMode = detectMode({ share, share, windowBass, roots, {}, profileKey });
     const auto [tonicMajor, tonicMinor] = tonicChordQualities(recentChords, localMode.tonic);
     rawLocalKey = majorMinorKeyFor(localMode, tonicMajor, tonicMinor, sum, profileKey);
 
-    if (smoothedLocalKey < 0)
-        smoothedLocalKey = rawLocalKey;
-    else if (rawLocalKey == smoothedLocalKey)
-    {
-        candidateKey = -1;
-        candidateRun = 0;
-    }
-    else
-    {
-        if (rawLocalKey == candidateKey)
-            ++candidateRun;
-        else
-        {
-            candidateKey = rawLocalKey;
-            candidateRun = 1;
-        }
-        if (candidateRun >= holdFrames)
-        {
-            smoothedLocalKey = candidateKey;
-            candidateKey = -1;
-            candidateRun = 0;
-        }
-    }
+    // Local key: a 24-state HMM over the per-frame answer (PLAN.md 4a). Staying is free; moving costs seconds of steady
+    // evidence: 4 s to a neighbour on the Camelot wheel, plus 0.2 s per further step (5 s at the far side). The relative
+    // key (same Camelot number) costs 6 s: it shares every note, so a brief lean towards it at a chord change is not a
+    // modulation.
+    if (rawLocalKey >= 0)
+        smoothedLocalKey = keyHmm.step([this](int st) { return st == rawLocalKey ? 0.0 : -1.0; },
+                                       [framesPerSecond](int from, int to)
+                                       {
+                                           const int d = camelotDistance(from, to);
+                                           return framesPerSecond * (d == 0 ? 6.0 : 3.8 + 0.2 * d);
+                                       });
 }
 
 KeySummary KeyAnalyzer::computeSummary() const
@@ -603,7 +659,7 @@ KeySummary KeyAnalyzer::computeSummary() const
     // Whole-song presence, bass and chord roots with the global tuning.
     const double globalOffset = tuneOffsetOf(totalRe, totalIm);
     s.tuningCents = globalOffset * 100.0;
-    Chroma presence {}, bass {}, roots {}, fundamentals {};
+    Chroma presence {}, bass {}, roots {}, fundamentals {}, phraseRoots {};
     for (const auto& [index, b] : timeline)
     {
         juce::ignoreUnused(index);
@@ -611,7 +667,16 @@ KeySummary KeyAnalyzer::computeSummary() const
         foldFine(b.bass, globalOffset, bass);
         foldFine(b.fund, globalOffset, fundamentals);
         if (b.chord >= 0 && b.weight > 0.0f)
-            roots[static_cast<std::size_t>(b.chord % 12)] += 1.0;
+        {
+            roots[static_cast<std::size_t>(chordRoot(b.chord))] += 1.0;
+            // Downbeats count half; the first beat of a 4-bar phrase and the last beat of one count fully.
+            double w = 0.0;
+            if (b.barBeat == 0)
+                w += 0.5 + ((b.bar % 4 + 4) % 4 == 0 ? 1.0 : 0.0);
+            if (b.barBeat >= 0 && b.barBeat == b.beatsPerBar - 1 && (b.bar % 4 + 4) % 4 == 3)
+                w += 1.0;
+            phraseRoots[static_cast<std::size_t>(chordRoot(b.chord))] += w;
+        }
     }
     double total = 0.0;
     for (auto v : presence)
@@ -631,7 +696,8 @@ KeySummary KeyAnalyzer::computeSummary() const
             fundShare[static_cast<std::size_t>(i)] = fundamentals[static_cast<std::size_t>(i)] / fundTotal;
     s.bass = bass;
     s.chordRoots = roots;
-    s.mode = detectMode({ fundShare, fundShare, bass, roots, s.key });
+    s.phraseRoots = phraseRoots;
+    s.mode = detectMode({ fundShare, fundShare, bass, roots, phraseRoots, s.key });
 
     std::vector<int> binChords;
     binChords.reserve(timeline.size());
@@ -647,12 +713,27 @@ KeySummary KeyAnalyzer::computeSummary() const
     return s;
 }
 
+void KeyAnalyzer::importBins(const KeyAnalyzer& other, int indexOffset, double secondsOffset, int minIndex, int maxIndex)
+{
+    for (const auto& [index, b] : other.timeline)
+    {
+        if (index < minIndex || index > maxIndex)
+            continue;
+        auto copy = b;
+        copy.bar = copy.barBeat = -1;
+        copy.beatsPerBar = 0;
+        copy.seconds += secondsOffset;
+        copy.pass = pass;
+        timeline[index + indexOffset] = copy;
+    }
+}
+
 // =============================================================================================================
 // State
 // =============================================================================================================
 void KeyAnalyzer::writeTo(juce::OutputStream& out) const
 {
-    out.writeInt(0x524b5431); // "RKT1"
+    out.writeInt(0x524b5432); // "RKT2": RKT1 plus bar, beat in bar, beats per bar
     out.writeInt(static_cast<int>(timeline.size()));
     for (const auto& [index, b] : timeline)
     {
@@ -665,13 +746,18 @@ void KeyAnalyzer::writeTo(juce::OutputStream& out) const
         out.writeInt(b.localKey);
         out.writeInt(b.chord);
         out.writeFloat(b.weight);
+        out.writeInt(b.bar);
+        out.writeInt(b.barBeat);
+        out.writeInt(b.beatsPerBar);
     }
 }
 
 bool KeyAnalyzer::readFrom(juce::InputStream& in)
 {
-    if (in.readInt() != 0x524b5431)
+    const int format = in.readInt();
+    if (format != 0x524b5431 && format != 0x524b5432)
         return false;
+    const bool hasBars = format == 0x524b5432;
     const int count = in.readInt();
     if (count < 0 || count > 1000000)
         return false;
@@ -692,6 +778,12 @@ bool KeyAnalyzer::readFrom(juce::InputStream& in)
         b.localKey = in.readInt();
         b.chord = in.readInt();
         b.weight = in.readFloat();
+        if (hasBars)
+        {
+            b.bar = in.readInt();
+            b.barBeat = in.readInt();
+            b.beatsPerBar = in.readInt();
+        }
         b.pass = 0;
         loaded[index] = b;
     }
