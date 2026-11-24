@@ -179,7 +179,7 @@ NuvoDeck answers only major or minor. A Dorian vamp (Dm7–G) usually comes back
 | The Snail patent FR 1455456 / EP 3155609 B1 (CNRS, licensed to IRCAM) | The claims centre on **demodulated FFT phase** and its frame-to-frame stability. Our engines use magnitudes only (NuvoDeck's method) plus time-domain pitch for the tuner, so they stay outside that core. Remaining question for counsel: whether showing a spiral display of spectral peaks alone touches any claim. Check status per country (filed 2014 → ~2034). |
 | The Snail look | Pitch spirals are old public-domain ideas (Drobisch 1855, Shepard). Keep our own visual language: no rotating hexagon, no "milky moustache", no copied colors or layout. |
 | Mixed In Key | No code or assets copied. Features (key, note %, key changes) are ideas, which copyright doesn't protect. Run a quick patent search on key-change and realtime key display. |
-| "Camelot" | MIK trademark. Codes are used descriptively (as NuvoDeck already does). Keep "Camelot" out of the product name and marketing headlines, and add a trademark credit in the docs/about box. |
+| "Camelot" | MIK trademark. Codes are used descriptively (as NuvoDeck already does). Keep "Camelot" out of the product name and marketing headlines. The trademark credit is in THIRD_PARTY_NOTICES.md; add it to the about box too. |
 | NuvoDeck code | Confirm you own it outright (no employer/client claim, no third-party code inside apart from listed libraries). |
 | Key profiles (Temperley, Krumhansl) | Published research data. Fine to use; cite in docs. |
 | JUCE 8 | Use a licence that matches revenue (Starter/Indie/Pro) or AGPLv3. Closed-source sale needs a commercial JUCE licence once over the free tier. |
@@ -187,5 +187,5 @@ NuvoDeck answers only major or minor. A Dorian vamp (Dm7–G) usually comes back
 | AAX | Avid developer agreement + PACE signing. |
 | ARA 2 SDK | Apache 2.0, keep the notice. |
 | CLAP / clap-juce-extensions | MIT, keep the notices. |
-| signalsmith-linear | NuvoDeck's vendored copy (`third_party/signalsmith/`) has **no licence file**. Upstream is MIT (verify on its repo), so add the LICENSE file to both projects and include the notice in the about box. |
+| signalsmith-linear | **Done here:** upstream MIT confirmed; `LICENSE.txt` + modification note in `third_party/signalsmith-linear/`, listed in THIRD_PARTY_NOTICES.md. Still to do: add the same LICENSE to NuvoDeck, and show the notices in an about box once the plugin has one. |
 | Fonts | Mockup fonts are SIL OFL; fine to embed with the licence text if used in the plugin. |

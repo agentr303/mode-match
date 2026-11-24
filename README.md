@@ -56,3 +56,7 @@ synthesised music and writes PNGs of the Analyze, Tune and compact layouts.
 
 The product was renamed from "Radial Key" (trademark risk - see PLAN.md section 9). Clear "Mode Match" before a public release. To rename again, change `MM_PRODUCT_NAME`,
 `MM_COMPANY_NAME`, `BUNDLE_ID` and the plugin codes (`Mdmh` / `Mdm1`) in `CMakeLists.txt`.
+
+## Licences
+
+Third-party code, research sources and trademarks: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
