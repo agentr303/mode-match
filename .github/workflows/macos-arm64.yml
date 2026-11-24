@@ -1,0 +1,78 @@
+# Builds the macOS Apple Silicon (arm64) VST3 on a GitHub-hosted Mac and attaches it to a release.
+# Runs when a release is published, or by hand (Actions -> macOS arm64 VST3 -> Run workflow) for an existing tag.
+name: macOS arm64 VST3
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload to (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14 # Apple Silicon runner
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target ModeMatch_VST3 --parallel
+
+      - name: Run tests
+        run: |
+          cmake --build build --config Release --target ModeMatchTests --parallel
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NAME="ModeMatch-${VERSION}-macos-arm64-vst3"
+          mkdir -p "dist/${NAME}"
+          cp -R "build/ModeMatch_artefacts/Release/VST3/Mode Match.vst3" "dist/${NAME}/"
+          # Ad-hoc signature: Apple Silicon refuses to load unsigned code. Not notarised.
+          codesign --force --deep --sign - "dist/${NAME}/Mode Match.vst3"
+          codesign --verify --deep --strict "dist/${NAME}/Mode Match.vst3"
+          lipo -info "dist/${NAME}/Mode Match.vst3/Contents/MacOS/Mode Match"
+          cp LICENSE THIRD_PARTY_NOTICES.md "dist/${NAME}/"
+          cp third_party/signalsmith-linear/LICENSE.txt "dist/${NAME}/signalsmith-linear-LICENSE.txt"
+          cat > "dist/${NAME}/README.txt" <<EOF
+          Mode Match ${VERSION} - macOS Apple Silicon (arm64), VST3
+
+          Install: copy "Mode Match.vst3" to ~/Library/Audio/Plug-Ins/VST3/ and rescan in your DAW.
+
+          The plugin is not notarised by Apple, so macOS blocks it the first time. In Terminal, run:
+            xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Mode Match.vst3"
+          then rescan plugins in your DAW.
+
+          How to use, screenshots and source code: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}
+
+          Mode Match is free software under the GNU AGPLv3 (LICENSE). Source for this build: tag ${TAG} at
+          https://github.com/${GITHUB_REPOSITORY}. Third-party notices: THIRD_PARTY_NOTICES.md.
+          EOF
+          (cd dist && ditto -c -k --sequesterRsrc --keepParent "${NAME}" "${NAME}.zip")
+          echo "ZIP=dist/${NAME}.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-vst3
+          path: ${{ env.ZIP }}
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ZIP" --clobber --repo "$GITHUB_REPOSITORY"
